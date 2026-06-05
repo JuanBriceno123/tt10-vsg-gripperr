@@ -1,8 +1,8 @@
 # Tiny Tapeout project information
 project:
   title:        "Variable-Stiffness Gripper ASIC"
-  author:       "Your Name"           # Update with your name
-  discord:      ""                     # Optional: Your discord username
+  author:       "Juan Briceño - Elkin Leguizamon"          
+  discord:      "juanbriceno123 - elkinleguizamon01"             
   description:  "Digital control system for a 2-joint robotic arm with servo-driven gripper"
   language:     "Verilog"
   clock_hz:     50000000              # 50 MHz clock
@@ -16,14 +16,15 @@ project:
   # List your project's source files here.
   # Source files must be in ./src and you must list each source file separately, one per line.
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
+  project:
   source_files:
     - "project.v"
-    - "tt_um_brazo_digital.v"
     - "brazo_digital_top.v"
     - "debouncer.v"
     - "nema_controller.v"
     - "gripper_stepper_controller.v"
-
+  top_module: "tt_um_brazo_digital"  
+ 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
