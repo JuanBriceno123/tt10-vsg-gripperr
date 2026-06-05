@@ -1,60 +1,74 @@
 <!---
-
-This file is used to generate your project datasheet. Please fill in the information below and delete any unused
-sections.
-
-You can also include images in this folder and reference them in the markdown. Each image must be less than
-512 kb in size, and the combined size of all images must be less than 1 MB.
+docs/info.md — Variable Stiffness Gripper ASIC (VSG-ASIC)
+Tiny Tapeout submission — SkyWater SKY130 130 nm
 -->
 
 ## How it works
 
-This project implements a digital control system for a two-joint robotic arm with a servo-driven mini gripper, described entirely in Verilog HDL and targeting the SkyWater SKY130 130 nm process via Tiny Tapeout.
+This project implements a digital control system for a two-axis robotic arm with a variable-stiffness gripper, written entirely in Verilog HDL and targeting the SkyWater SKY130 130 nm process via Tiny Tapeout.
 
-The design consists of the following functional blocks:
+The system drives three stepper motors (X axis, Y axis, and gripper) using **STEP/DIR** signals compatible with industry-standard drivers such as the **DRV8825** or **A4988**. All mechanical switch inputs are filtered through an internal **debouncer** (20 ms settling window) to eliminate contact bounce before reaching the control logic.
 
-- **Finite State Machine (FSM):** Central controller that manages the operating states of the system — idle, joint 1 movement, joint 2 movement, gripper open, and gripper close. State transitions are triggered by the digital input commands.
+### Functional blocks
 
-- **Stepper Motor Controllers (×2):** One controller per arm joint. Each generates the four-phase step sequence required to drive a stepper motor, with configurable direction. Joint 1 and Joint 2 are controlled independently.
+- **Debouncer (×5):** Each mechanical input — two buttons per axis plus the gripper limit switch — passes through a 2-stage synchronizer followed by a stable-time counter (1 000 000 cycles at 50 MHz = 20 ms). Only clean, settled signals reach the motor controllers.
 
-- **SG90 Servo PWM Driver:** Generates a 50 Hz PWM signal with a pulse width between 1 ms (0°) and 2 ms (180°) to position the SG90 servo motor that actuates the gripper. The output switches between a fully open and fully closed position based on the active command.
+- **NEMA Controller (×2):** One instance per axis (X and Y). Generates a STEP pulse train at ~4 kHz and a DIR signal based on which directional button is pressed. If both buttons are pressed simultaneously the motor stops — a hardware conflict guard. When no button is pressed the STEP output stays low, locking the motor in place.
 
-- **Limit Switch Interface:** Reads two digital inputs corresponding to the end-of-course buttons mounted on both sides of the arm. When either limit switch is asserted, the FSM halts servo movement in that direction, preventing mechanical overtravel and protecting the gripper hardware.
+- **Gripper Stepper Controller (FSM):** A three-state machine — `IDLE`, `CLOSING`, `HOLDING` — manages the gripper motor:
+  - **IDLE:** `dip_switch = 0`. Motor stopped, DIR set to open direction.
+  - **CLOSING:** `dip_switch = 1`. STEP pulses drive the gripper closed.
+  - **HOLDING:** `rigidity_switch = 1` detected. STEP output freezes, holding the last position until `dip_switch` is released.
 
-All modules are synchronous to the system clock and include a synchronous active-high reset.
+- **PWM Timing:** STEP pulse frequency is determined by `SPEED_DIV = 6 250` cycles per half-period, giving a step rate of `50 MHz / (2 × 6 250) = 4 000 Hz` (4 kHz).
 
 ## How to test
 
-1. Apply clock and assert reset (`rst = 1`) for at least two clock cycles to initialize the FSM and all internal registers. Then deassert reset (`rst = 0`).
+1. Apply clock (`clk`) at 50 MHz and assert reset low (`rst_n = 0`) for at least 10 clock cycles. Then release reset (`rst_n = 1`). All outputs will be `0x00`.
 
-2. Drive the `ui_in` input pins with the desired command according to the table below:
+2. Drive `ui_in` with the desired command. All inputs are debounced internally — hold each input steady for at least **20 ms** (1 000 000 cycles at 50 MHz) before expecting the output to respond.
 
-| `ui_in` value | Action |
-|---|---|
-| `00000001` | Move Joint 1 — forward |
-| `00000010` | Move Joint 1 — reverse |
-| `00000100` | Move Joint 2 — forward |
-| `00001000` | Move Joint 2 — reverse |
-| `00010000` | Close gripper (servo to 0°) |
-| `00100000` | Open gripper (servo to 180°) |
-| `00000000` | Stop / Idle |
+| `ui_in` bit | Signal | Action |
+|---|---|---|
+| `[0]` | `btn_x_cw` | Move X axis clockwise |
+| `[1]` | `btn_x_ccw` | Move X axis counter-clockwise |
+| `[2]` | `btn_y_cw` | Move Y axis clockwise |
+| `[3]` | `btn_y_ccw` | Move Y axis counter-clockwise |
+| `[4]` | `dip_grip` | Enable gripper close sequence |
+| `[5]` | `sw_limit` | Rigidity/contact limit switch (active high) |
+| `[6–7]` | — | Unused, tie to 0 |
 
-3. Observe the `uo_out` output pins:
-   - `uo_out[3:0]` — 4-phase step output for Stepper Motor 1 (Joint 1)
-   - `uo_out[7:4]` — 4-phase step output for Stepper Motor 2 (Joint 2)
+3. Observe `uo_out`:
 
-4. The servo PWM signal is available on `uio_out[0]` (bidirectional pin configured as output). Connect this pin to the signal wire of the SG90 servo.
+| `uo_out` bit | Signal | Description |
+|---|---|---|
+| `[0]` | `step_x` | X-axis STEP pulse train (~4 kHz when moving) |
+| `[1]` | `dir_x` | X-axis direction (1 = CW, 0 = CCW) |
+| `[2]` | `step_y` | Y-axis STEP pulse train |
+| `[3]` | `dir_y` | Y-axis direction (1 = CW, 0 = CCW) |
+| `[4]` | `step_grip` | Gripper STEP pulse train |
+| `[5]` | `dir_grip` | Gripper direction (1 = closing, 0 = opening) |
+| `[6–7]` | — | Tied to 0 |
 
-5. To test the limit switches, assert `ui_in[6]` (limit switch side A) or `ui_in[7]` (limit switch side B) while a gripper open or close command is active. The servo output should immediately stop when the corresponding limit is reached.
+4. **Gripper sequence test:**
+   - Assert `ui_in[4]` (dip_grip). After debounce, `uo_out[4]` (step_grip) should begin toggling and `uo_out[5]` (dir_grip) should go high.
+   - Assert `ui_in[5]` (sw_limit) while `ui_in[4]` remains high. After debounce, `step_grip` must freeze (HOLD state).
+   - Release `ui_in[4]`. The gripper returns to IDLE and `step_grip` stops.
 
-> **Tip:** Use a logic analyzer or oscilloscope on `uio_out[0]` to verify the PWM period (20 ms) and pulse width (1 ms for closed, 2 ms for open) of the servo signal.
+5. **Conflict test:** Assert both `ui_in[0]` and `ui_in[1]` simultaneously. `uo_out[0]` (step_x) must remain `0`.
+
+> **Tip:** Use a logic analyzer on `uo_out[0]` and `uo_out[2]` to verify the STEP pulse frequency (~4 kHz = 250 µs period). Use `uo_out[1]` and `uo_out[3]` to confirm direction changes correctly.
 
 ## External hardware
 
-| Component | Quantity | Connection | Notes |
+| Component | Qty | Connection | Notes |
 |---|---|---|---|
-| Stepper motor | 2 | `uo_out[3:0]` (Joint 1), `uo_out[7:4]` (Joint 2) | Requires stepper driver board (e.g. A4988, ULN2003) — do not connect motor directly to ASIC pins |
-| SG90 servo motor | 1 | `uio_out[0]` (PWM signal) | Power servo from external 5 V supply; connect GND in common |
-| Limit switch (end-of-course) | 2 | `ui_in[6]` (side A), `ui_in[7]` (side B) | Wire as active-high: pull down with 10 kΩ resistor, switch connects pin to VCC |
-| Stepper driver board (e.g. ULN2003 or A4988) | 2 | Between `uo_out` and stepper motors | Level shifting and current amplification required |
-| External 5 V power supply | 1 | Servo VCC and stepper driver VCC | Do not draw servo/motor current from the ASIC supply |
+| Stepper motor driver (DRV8825 or A4988) | 3 | `uo_out[0–1]` (X), `uo_out[2–3]` (Y), `uo_out[4–5]` (gripper) | Connect STEP and DIR pins. Set microstepping via MS pins on driver board |
+| NEMA 17 stepper motor | 2 | Via DRV8825 driver | X and Y axis |
+| Stepper motor (gripper, e.g. NEMA 11 or NEMA 17) | 1 | Via DRV8825 driver | Gripper open/close |
+| Mechanical push button (X axis) | 2 | `ui_in[0]`, `ui_in[1]` | Wire active-high with 10 kΩ pull-down to GND |
+| Mechanical push button (Y axis) | 2 | `ui_in[2]`, `ui_in[3]` | Wire active-high with 10 kΩ pull-down to GND |
+| DIP switch | 1 | `ui_in[4]` | Gripper enable, active high |
+| Limit / contact switch | 1 | `ui_in[5]` | Rigidity detection, active high, 10 kΩ pull-down |
+| External power supply (12–24 V) | 1 | DRV8825 VMOT | Do not power motors from the ASIC supply |
+| Decoupling capacitor (100 µF) | 3 | Across each DRV8825 VMOT–GND | Protects driver from back-EMF spikes |
