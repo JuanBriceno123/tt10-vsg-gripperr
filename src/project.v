@@ -14,6 +14,7 @@ module tt_um_brazo_digital (
     // Pines bidireccionales no usados configurados como entradas
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
+    wire _unused = &{ena, uio_in, ui_in[7:6], 1'b0};
 
     // Cables internos hacia brazo_digital_top
     wire step_x, dir_x;
